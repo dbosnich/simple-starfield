@@ -1,0 +1,56 @@
+﻿{
+    "version": 3,
+    "configurePresets": [
+        {
+            "name": "x64-base",
+            "hidden": true,
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/bin/ninja/${presetName}/build",
+            "installDir": "${sourceDir}/bin/ninja/${presetName}/install",
+            "architecture": {
+                "value": "x64",
+                "strategy": "external"
+            }
+        },
+        {
+            "name": "windows-x64-base",
+            "hidden": true,
+            "inherits": "x64-base",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "windows-x64-debug",
+            "inherits": "windows-x64-base",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+        },
+        {
+            "name": "windows-x64-release",
+            "inherits": "windows-x64-base",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+        },
+        {
+            "name": "linux-x64-base",
+            "hidden": true,
+            "inherits": "x64-base",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        },
+        {
+            "name": "linux-x64-debug",
+            "inherits": "linux-x64-base",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+        },
+        {
+            "name": "linux-x64-release",
+            "inherits": "linux-x64-base",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+        }
+    ]
+}
