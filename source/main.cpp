@@ -91,6 +91,15 @@ int main(int argc, char** argv)
     Simple::Starfield starfield6(config);
     starfield6.SetCappedFPS(false);
 
+    // MacOS display contexts can only run on the main thread.
+#ifdef __APPLE__
+    starfield1.Run();
+    starfield2.Run();
+    starfield3.Run();
+    starfield4.Run();
+    starfield5.Run();
+    starfield6.Run();
+#else
     std::thread runThread1 = starfield1.RunInThread();
     std::thread runThread2 = starfield2.RunInThread();
     std::thread runThread3 = starfield3.RunInThread();
@@ -104,4 +113,5 @@ int main(int argc, char** argv)
     runThread4.join();
     runThread5.join();
     runThread6.join();
+#endif // __APPLE__
 }

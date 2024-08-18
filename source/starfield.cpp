@@ -56,8 +56,8 @@ void Starfield::ShutDown()
 {
 #ifdef CUDA_SUPPORTED
     cudaFree(m_cudaDeviceStars);
-    m_cudaDeviceStars = nullptr;
 #endif // CUDA_SUPPORTED
+    m_cudaDeviceStars = nullptr;
 
     delete(m_context);
     m_context = nullptr;
