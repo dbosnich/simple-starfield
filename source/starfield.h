@@ -11,6 +11,8 @@
 #include <simple/application/application.h>
 #include <simple/display/context.h>
 
+#include <vector>
+
 //--------------------------------------------------------------
 namespace Simple
 {
@@ -19,7 +21,26 @@ namespace Simple
 class Starfield : public Application
 {
 public:
-    Starfield() = default;
+    //----------------------------------------------------------
+    struct Config
+    {
+        float zNear = 0.0f;
+        float zFar = 800.0f;
+        float focalLength = 200.0f;
+        float starWidth = 3.0f;
+        float starHeight = 3.0f;
+        float starSpeed = 60.0f;
+        uint32_t numStars = 5000;
+        Display::Context::Config displayContextConfig = {};
+    };
+
+    //----------------------------------------------------------
+    struct Star
+    {
+        float x = 0.0f, y = 0.0f, z = 0.0f;
+    };
+
+    Starfield(const Config& a_starfieldConfig);
     virtual ~Starfield() = default;
 
     Starfield(const Starfield&) = delete;
@@ -42,6 +63,9 @@ protected:
 
 private:
     Display::Context* m_context = nullptr;
+    std::vector<Star> m_stars;
+    Star* m_cudaDeviceStars;
+    const Config m_config;
 };
 
 } // namespace Simple

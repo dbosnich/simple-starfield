@@ -8,58 +8,57 @@
 
 #include <memory_utils.h>
 #include <starfield.h>
-
 #include <inttypes.h>
 #include <assert.h>
 #include <random>
 
+#ifdef CUDA_SUPPORTED
+#   include <cuda_runtime.h>
+#endif // CUDA_SUPPORTED
+
 using namespace Simple;
 using namespace Simple::Display;
 
-namespace
+using Stars = std::vector<Starfield::Star>;
+
+//--------------------------------------------------------------
+Starfield::Starfield(const Config& a_config)
+    : m_stars(a_config.numStars)
+    , m_cudaDeviceStars(nullptr)
+    , m_config(a_config)
 {
-    static constexpr uint32_t WINDOW_WIDTH = 800;
-    static constexpr uint32_t WINDOW_HEIGHT = 600;
-
-    static constexpr uint32_t BUFFER_WIDTH = 1920;
-    static constexpr uint32_t BUFFER_HEIGHT = 1080;
-
-    static constexpr float Z_NEAR = 0.0f;
-    static constexpr float Z_FAR = 800.0f;
-    static constexpr float FOCAL_LENGTH = 200.0f; // Distance from camera to viewplane.
-
-    static constexpr float STAR_WIDTH = 3.0f;
-    static constexpr float STAR_HEIGHT = 3.0f;
-
-    static constexpr float STAR_SPEED = 60.0f;
-    static constexpr uint32_t NUM_STARS = 5000;
-
-    struct Vector3D { float x, y, z = 0.0f; };
-    static Vector3D STAR_INSTANCES[NUM_STARS] = {};
-
-    struct ColorFloat { float r, g, b, a = 0.0f; };
-    struct ColorUint8 { uint8_t r, g, b, a = 0; };
-    struct ColorUint16 { uint16_t r, g, b, a = 0; };
 }
 
 //--------------------------------------------------------------
 void Starfield::StartUp()
 {
-    Context::Config contextConfig;
-    contextConfig.bufferConfig.width = BUFFER_WIDTH;
-    contextConfig.bufferConfig.height = BUFFER_HEIGHT;
-    contextConfig.windowConfig.initialWidth = WINDOW_WIDTH;
-    contextConfig.windowConfig.initialHeight = WINDOW_HEIGHT;
-    contextConfig.windowConfig.titleUTF8 = "Simple Starfield";
-    contextConfig.graphicsAPI = Context::GraphicsAPI::NATIVE;
-
     assert(m_context == nullptr);
-    m_context = new Context(contextConfig);
+    m_context = new Context(m_config.displayContextConfig);
+
+#ifdef CUDA_SUPPORTED
+    const size_t starsSize = m_stars.size() * sizeof(Star);
+    cudaMalloc(&m_cudaDeviceStars, starsSize);
+    cudaMemcpy(m_cudaDeviceStars,
+               m_stars.data(),
+               starsSize,
+               cudaMemcpyHostToDevice);
+#endif // CUDA_SUPPORTED
+
+    // Shut down immediately if there is no display buffer.
+    if (!m_context->GetBuffer().GetData())
+    {
+        RequestShutDown();
+    }
 }
 
 //--------------------------------------------------------------
 void Starfield::ShutDown()
 {
+#ifdef CUDA_SUPPORTED
+    cudaFree(m_cudaDeviceStars);
+    m_cudaDeviceStars = nullptr;
+#endif // CUDA_SUPPORTED
+
     delete(m_context);
     m_context = nullptr;
 }
@@ -92,17 +91,15 @@ void Starfield::UpdateFixed(float a_fixedTimeSeconds)
         break;
         case Buffer::Format::RGBA_UINT8:
         {
-            static constexpr uint8_t MAX = std::numeric_limits<uint8_t>::max();
-            static constexpr uint8_t BLACK[4] = { 0, 0, 0, MAX };
-            static constexpr uint8_t WHITE[4] = { MAX, MAX, MAX, MAX };
+            static constexpr uint8_t BLACK[4] = { 0, 0, 0, UINT8_MAX };
+            static constexpr uint8_t WHITE[4] = { UINT8_MAX, UINT8_MAX, UINT8_MAX, UINT8_MAX };
             UpdateStars<uint8_t, 4>(BLACK, WHITE, a_fixedTimeSeconds);
         }
         break;
         case Buffer::Format::RGBA_UINT16:
         {
-            static constexpr uint16_t MAX = std::numeric_limits<uint16_t>::max();
-            static constexpr uint16_t BLACK[4] = { 0, 0, 0, MAX };
-            static constexpr uint16_t WHITE[4] = { MAX, MAX, MAX, MAX };
+            static constexpr uint16_t BLACK[4] = { 0, 0, 0, UINT16_MAX };
+            static constexpr uint16_t WHITE[4] = { UINT16_MAX, UINT16_MAX, UINT16_MAX, UINT16_MAX };
             UpdateStars<uint16_t, 4>(BLACK, WHITE, a_fixedTimeSeconds);
         }
         break;
@@ -121,6 +118,18 @@ void Starfield::UpdateEnded(float a_deltaTimeSeconds)
 }
 
 //--------------------------------------------------------------
+#ifdef CUDA_SUPPORTED
+template <typename DataType, uint32_t ChannelsPerPixel>
+extern void UpdateStarsCuda(const Starfield::Config& a_config,
+                            const Display::Context& a_context,
+                            const DataType a_backColor[ChannelsPerPixel],
+                            const DataType a_starColor[ChannelsPerPixel],
+                            const Stars& a_hostStars,
+                            Starfield::Star* a_stars,
+                            float a_secondsElapsed);
+#endif // CUDA_SUPPORTED
+
+//--------------------------------------------------------------
 template <class T = uint32_t>
 T RandomFloat(T a_min, T a_max)
 {
@@ -132,12 +141,15 @@ T RandomFloat(T a_min, T a_max)
 
 //--------------------------------------------------------------
 template<typename DataType, uint32_t ChannelsPerPixel>
-void Starfield::UpdateStars(const DataType a_backColor[ChannelsPerPixel],
-                            const DataType a_starColor[ChannelsPerPixel],
-                            float a_timeSeconds)
+void UpdateStarsHost(const DataType a_backColor[ChannelsPerPixel],
+                     const DataType a_starColor[ChannelsPerPixel],
+                     const Starfield::Config& a_config,
+                     Display::Context& a_context,
+                     Stars& a_hostStars,
+                     float a_secondsElapsed)
 {
     // Cache buffer values.
-    const Buffer& buffer = m_context->GetBuffer();
+    const Buffer& buffer = a_context.GetBuffer();
     const uint32_t bufferWidth = buffer.GetWidth();
     const uint32_t bufferHeight = buffer.GetHeight();
     DataType* bufferData = buffer.GetData<DataType>();
@@ -164,32 +176,33 @@ void Starfield::UpdateStars(const DataType a_backColor[ChannelsPerPixel],
     const float sceneHeight = static_cast<float>(bufferHeight);
     const float sceneCenterX = sceneWidth * 0.5f;
     const float sceneCenterY = sceneHeight * 0.5f;
-    for (uint32_t i = 0; i < NUM_STARS; ++i)
+    const size_t numStars = a_hostStars.size();
+    for (size_t i = 0; i < numStars; ++i)
     {
-        Vector3D& starInstance = STAR_INSTANCES[i];
-        if (starInstance.z <= Z_NEAR)
+        Starfield::Star& starInstance = a_hostStars[i];
+        if (starInstance.z <= a_config.zNear)
         {
             // The star has passed the near clip plane,
             // position it randomly in the visible range.
             starInstance.x = (RandomFloat(0.0f, 1.0f) * sceneWidth) - sceneCenterX;
             starInstance.y = (RandomFloat(0.0f, 1.0f) * sceneHeight) - sceneCenterY;
-            starInstance.z = (RandomFloat(0.0f, 1.0f) * (Z_FAR - Z_NEAR));
+            starInstance.z = (RandomFloat(0.0f, 1.0f) * (a_config.zFar - a_config.zNear));
         }
         else
         {
             // The star is still visible,
             // move it towards the camera.
-            starInstance.z -= STAR_SPEED * a_timeSeconds;
+            starInstance.z -= a_config.starSpeed * a_secondsElapsed;
         }
 
         // Project the star onto the screen.
-        const float posX = ((starInstance.x * FOCAL_LENGTH) / starInstance.z) + sceneCenterX;
-        const float posY = ((starInstance.y * FOCAL_LENGTH) / starInstance.z) + sceneCenterY;
+        const float posX = ((starInstance.x * a_config.focalLength) / starInstance.z) + sceneCenterX;
+        const float posY = ((starInstance.y * a_config.focalLength) / starInstance.z) + sceneCenterY;
 
         // Scale the star such that it gets bigger as it moves towards the screen.
-        const float scale = (1.0f - (starInstance.z / Z_FAR));
-        const float width = (STAR_WIDTH * scale);
-        const float height = (STAR_HEIGHT * scale);
+        const float scale = (1.0f - (starInstance.z / a_config.zFar));
+        const float width = (a_config.starWidth * scale);
+        const float height = (a_config.starHeight * scale);
 
         // Draw the star to the pixel buffer.
         for (int32_t x = (int32_t)posX; x < (int32_t)(posX + width); ++x)
@@ -212,6 +225,36 @@ void Starfield::UpdateStars(const DataType a_backColor[ChannelsPerPixel],
                 }
             }
         }
+    }
+}
+
+//--------------------------------------------------------------
+template<typename DataType, uint32_t ChannelsPerPixel>
+void Starfield::UpdateStars(const DataType a_backColor[ChannelsPerPixel],
+                            const DataType a_starColor[ChannelsPerPixel],
+                            float a_secondsElapsed)
+{
+    const Buffer& buffer = m_context->GetBuffer();
+    if (buffer.GetInterop() == Buffer::Interop::HOST)
+    {
+        UpdateStarsHost<DataType, ChannelsPerPixel>(a_backColor,
+                                                    a_starColor,
+                                                    m_config,
+                                                    *m_context,
+                                                    m_stars,
+                                                    a_secondsElapsed);
+    }
+    else if (buffer.GetInterop() == Buffer::Interop::CUDA)
+    {
+    #ifdef CUDA_SUPPORTED
+        UpdateStarsCuda<DataType, ChannelsPerPixel>(m_config,
+                                                    *m_context,
+                                                    a_backColor,
+                                                    a_starColor,
+                                                    m_stars,
+                                                    m_cudaDeviceStars,
+                                                    a_secondsElapsed);
+    #endif // CUDA_SUPPORTED
     }
 }
 

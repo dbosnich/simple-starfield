@@ -11,7 +11,8 @@ set(SOURCE_DIR "${PROJECT_SOURCE_DIR}/source")
 
 # Gather all source files.
 file(GLOB_RECURSE source_files ${SOURCE_DIR}/*.h
-                               ${SOURCE_DIR}/*.cpp)
+                               ${SOURCE_DIR}/*.cpp
+                               ${SOURCE_DIR}/*.cu)
 
 # Group all files for the IDE.
 source_group(TREE "${SOURCE_DIR}"
@@ -56,5 +57,19 @@ target_link_libraries(${APP_TARGET} simple_application
 target_compile_features(${APP_TARGET} PUBLIC cxx_std_14)
 target_include_directories(${APP_TARGET} PRIVATE ${SOURCE_DIR})
 target_compile_options(${APP_TARGET} PRIVATE
-  $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX /GR->
-  $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Werror -fno-rtti>)
+  $<$<COMPILE_LANGUAGE:CXX>:
+    $<$<CXX_COMPILER_ID:MSVC>: /GR- /W4 /WX>
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-fno-rtti -Wall -Werror -Wextra>
+  >
+)
+
+# Add CUDA dependencies.
+find_package(CUDAToolkit)
+if (${CUDAToolkit_FOUND})
+    enable_language(CUDA)
+    target_compile_definitions(${APP_TARGET} PRIVATE CUDA_SUPPORTED)
+else()
+    # Ensure CUDA files are displayed but not built.
+    file(GLOB_RECURSE cuda_files *.cu)
+    set_source_files_properties(${cuda_files} PROPERTIES HEADER_FILE_ONLY TRUE)
+endif()
