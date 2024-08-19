@@ -10,6 +10,7 @@
 #include <starfield.h>
 #include <inttypes.h>
 #include <assert.h>
+#include <cstring>
 #include <random>
 
 #ifdef CUDA_SUPPORTED
