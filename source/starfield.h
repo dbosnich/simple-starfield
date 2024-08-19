@@ -38,6 +38,7 @@ public:
     struct Star
     {
         float x = 0.0f, y = 0.0f, z = 0.0f;
+        float r = 1.0f, g = 1.0f, b = 1.0f;
     };
 
     Starfield(const Config& a_starfieldConfig);
@@ -54,10 +55,8 @@ protected:
     void UpdateFixed(float a_fixedTimeSeconds) override;
     void UpdateEnded(float a_deltaTimeSeconds) override;
 
-    template<typename DataType, uint32_t ChannelsPerPixel>
-    void UpdateStars(const DataType a_backColor[ChannelsPerPixel],
-                     const DataType a_starColor[ChannelsPerPixel],
-                     float a_timeSeconds);
+    template<typename DataType>
+    void UpdateStars(float a_timeSeconds);
 
     void OnFrameComplete(const FrameStats& a_stats) override;
 

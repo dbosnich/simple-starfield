@@ -17,35 +17,54 @@ using namespace std;
 
 using Stars = vector<Starfield::Star>;
 
-template <typename DataType, uint32_t ChannelsPerPixel>
-__constant__ DataType BACK_COLOR[ChannelsPerPixel];
-
-template <typename DataType, uint32_t ChannelsPerPixel>
-__constant__ DataType STAR_COLOR[ChannelsPerPixel];
+//--------------------------------------------------------------
+template<typename DataType>
+__device__ DataType ChannelValueFromFloatDevice(float a_value);
 
 //--------------------------------------------------------------
-template <typename DataType, uint32_t ChannelsPerPixel>
-__global__ void SetBackgroundKernel(DataType* a_bufferData,
-                                    uint32_t a_bufferWidth,
-                                    uint32_t a_bufferHeight)
+template<>
+__device__ float ChannelValueFromFloatDevice<float>(float a_value)
 {
-    const uint32_t x = blockIdx.x * blockDim.x + threadIdx.x;
-    const uint32_t y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= a_bufferWidth || y >= a_bufferHeight)
-    {
-        return;
-    }
+    return max(0.0f, min(a_value, 1.0f));
+}
 
-    const uint32_t i = (x * ChannelsPerPixel) +
-                       (y * a_bufferWidth * ChannelsPerPixel);
-    for (uint32_t z = 0; z < ChannelsPerPixel; ++z)
+//--------------------------------------------------------------
+template<>
+__device__ uint8_t ChannelValueFromFloatDevice<uint8_t>(float a_value)
+{
+    constexpr float UINT8_MAX_AS_FLOAT = static_cast<float>(UINT8_MAX);
+    a_value = max(0.0f, min(a_value, 1.0f));
+    a_value *= UINT8_MAX_AS_FLOAT;
+    return static_cast<uint8_t>(a_value);
+}
+
+//--------------------------------------------------------------
+template<>
+__device__ uint16_t ChannelValueFromFloatDevice<uint16_t>(float a_value)
+{
+    constexpr float UINT16_MAX_AS_FLOAT = static_cast<float>(UINT16_MAX);
+    a_value = max(0.0f, min(a_value, 1.0f));
+    a_value *= UINT16_MAX_AS_FLOAT;
+    return static_cast<uint16_t>(a_value);
+}
+
+//--------------------------------------------------------------
+template<typename DataType>
+__device__ DataType ChannelValueFromIndexDevice(const Starfield::Star& a_star,
+                                                uint32_t a_index)
+{
+    switch (a_index)
     {
-        a_bufferData[i + z] = BACK_COLOR<DataType, ChannelsPerPixel>[z];
+        case 0: return ChannelValueFromFloatDevice<DataType>(a_star.r);
+        case 1: return ChannelValueFromFloatDevice<DataType>(a_star.g);
+        case 2: return ChannelValueFromFloatDevice<DataType>(a_star.b);
+        case 3: return ChannelValueFromFloatDevice<DataType>(1.0f); // Alpha
+        default:  return ChannelValueFromFloatDevice<DataType>(0.0f);
     }
 }
 
 //--------------------------------------------------------------
-template <typename DataType, uint32_t ChannelsPerPixel>
+template <typename DataType>
 __global__ void UpdateStarsKernel(const Starfield::Config a_config,
                                   Starfield::Star* a_stars,
                                   size_t a_numDeviceStars,
@@ -53,6 +72,7 @@ __global__ void UpdateStarsKernel(const Starfield::Config a_config,
                                   DataType* a_bufferData,
                                   uint32_t a_bufferWidth,
                                   uint32_t a_bufferHeight,
+                                  uint32_t a_numChannels,
                                   uint64_t a_randomSeed)
 {
     const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -77,6 +97,11 @@ __global__ void UpdateStarsKernel(const Starfield::Config a_config,
         starInstance.x = (curand_uniform(&state) * sceneWidth) - sceneCenterX;
         starInstance.y = (curand_uniform(&state) * sceneHeight) - sceneCenterY;
         starInstance.z = (curand_uniform(&state) * (a_config.zFar - a_config.zNear)) + a_config.zNear;
+
+        // Recolor star
+        starInstance.r = curand_uniform(&state);
+        starInstance.g = curand_uniform(&state);
+        starInstance.b = curand_uniform(&state);
     }
     else
     {
@@ -100,17 +125,17 @@ __global__ void UpdateStarsKernel(const Starfield::Config a_config,
         for (int32_t y = (int32_t)posY; y < (int32_t)(posY + height); ++y)
         {
             if (y < 0 || (uint32_t)y >= a_bufferHeight) continue;
-            const uint32_t index = ((x * ChannelsPerPixel) + (y * a_bufferWidth * ChannelsPerPixel));
-            for (uint32_t z = 0; z < ChannelsPerPixel; ++z)
+            const uint32_t index = ((x * a_numChannels) + (y * a_bufferWidth * a_numChannels));
+            for (uint32_t z = 0; z < a_numChannels; ++z)
             {
-                a_bufferData[index + z] = STAR_COLOR<DataType, ChannelsPerPixel>[z];
+                a_bufferData[index + z] = ChannelValueFromIndexDevice<DataType>(starInstance, z);
             }
         }
     }
 }
 
 //--------------------------------------------------------------
-template <typename DataType, uint32_t ChannelsPerPixel>
+template <typename DataType>
 void UpdateStarsCuda(const Starfield::Config& a_config,
                      const Display::Context& a_context,
                      Starfield::Star* a_stars,
@@ -118,78 +143,66 @@ void UpdateStarsCuda(const Starfield::Config& a_config,
                      float a_secondsElapsed)
 {
     const Buffer& buffer = a_context.GetBuffer();
+    const uint32_t bufferSize = buffer.GetSize();
     const uint32_t bufferWidth = buffer.GetWidth();
     const uint32_t bufferHeight = buffer.GetHeight();
     DataType* bufferData = buffer.GetData<DataType, Buffer::Interop::CUDA>();
-    if (!bufferWidth || !bufferHeight || !bufferData)
+    const uint32_t numChannels = buffer.ChannelsPerPixel(buffer.GetFormat());
+    if (!bufferSize || !bufferWidth || !bufferHeight || !bufferData || !numChannels)
     {
         return;
     }
 
     // Clear the display buffer.
-    const dim3 blockDim(16, 16);
-    const dim3 gridDim((bufferWidth + blockDim.x - 1) / blockDim.x,
-                       (bufferHeight + blockDim.y - 1) / blockDim.y);
-    SetBackgroundKernel<DataType, ChannelsPerPixel><<<gridDim, blockDim>>>(bufferData,
-                                                                           bufferWidth,
-                                                                           bufferHeight);
+    cudaMemset(bufferData, 0, bufferSize);
 
     // Prepare for kernel launch.
     const uint32_t threadsPerBlock = 256;
     const uint32_t numBlocks = ((uint32_t)a_numDeviceStars + threadsPerBlock - 1) / threadsPerBlock;
     const uint64_t randomSeed = static_cast<uint64_t>(time(nullptr));
-    UpdateStarsKernel<DataType, ChannelsPerPixel><<<numBlocks, threadsPerBlock>>>(a_config,
-                                                                                  a_stars,
-                                                                                  a_numDeviceStars,
-                                                                                  a_secondsElapsed,
-                                                                                  bufferData,
-                                                                                  bufferWidth,
-                                                                                  bufferHeight,
-                                                                                  randomSeed);
+    UpdateStarsKernel<DataType><<<numBlocks, threadsPerBlock>>>(a_config,
+                                                                a_stars,
+                                                                a_numDeviceStars,
+                                                                a_secondsElapsed,
+                                                                bufferData,
+                                                                bufferWidth,
+                                                                bufferHeight,
+                                                                numChannels,
+                                                                randomSeed);
 }
 
 //--------------------------------------------------------------
-template <typename DataType, uint32_t ChannelsPerPixel>
+template <typename DataType>
 void UpdateStarsCuda(const Starfield::Config& a_config,
                      const Display::Context& a_context,
-                     const DataType a_backColor[ChannelsPerPixel],
-                     const DataType a_starColor[ChannelsPerPixel],
                      const Stars& a_hostStars,
                      Starfield::Star* a_stars,
                      float a_secondsElapsed)
 {
-    cudaMemcpyToSymbol(BACK_COLOR<DataType, ChannelsPerPixel>, a_backColor, ChannelsPerPixel * sizeof(DataType));
-    cudaMemcpyToSymbol(STAR_COLOR<DataType, ChannelsPerPixel>, a_starColor, ChannelsPerPixel * sizeof(DataType));
-    UpdateStarsCuda<DataType, ChannelsPerPixel>(a_config,
-                                                a_context,
-                                                a_stars,
-                                                a_hostStars.size(),
-                                                a_secondsElapsed);
+    UpdateStarsCuda<DataType>(a_config,
+                              a_context,
+                              a_stars,
+                              a_hostStars.size(),
+                              a_secondsElapsed);
 }
 
 //--------------------------------------------------------------
-template void UpdateStarsCuda<float, 4>(const Starfield::Config& a_config,
+template void UpdateStarsCuda<float>(const Starfield::Config& a_config,
+                                     const Display::Context& a_context,
+                                     const Stars& a_hostStars,
+                                     Starfield::Star* a_stars,
+                                     float a_secondsElapsed);
+
+//--------------------------------------------------------------
+template void UpdateStarsCuda<uint8_t>(const Starfield::Config& a_config,
+                                       const Display::Context& a_context,
+                                       const Stars& a_hostStars,
+                                       Starfield::Star* a_stars,
+                                       float a_secondsElapsed);
+
+//--------------------------------------------------------------
+template void UpdateStarsCuda<uint16_t>(const Starfield::Config& a_config,
                                         const Display::Context& a_context,
-                                        const float a_backColor[4],
-                                        const float a_starColor[4],
                                         const Stars& a_hostStars,
                                         Starfield::Star* a_stars,
                                         float a_secondsElapsed);
-
-//--------------------------------------------------------------
-template void UpdateStarsCuda<uint8_t, 4>(const Starfield::Config& a_config,
-                                          const Display::Context& a_context,
-                                          const uint8_t a_backColor[4],
-                                          const uint8_t a_starColor[4],
-                                          const Stars& a_hostStars,
-                                          Starfield::Star* a_stars,
-                                          float a_secondsElapsed);
-
-//--------------------------------------------------------------
-template void UpdateStarsCuda<uint16_t, 4>(const Starfield::Config& a_config,
-                                           const Display::Context& a_context,
-                                           const uint16_t a_backColor[4],
-                                           const uint16_t a_starColor[4],
-                                           const Stars& a_hostStars,
-                                           Starfield::Star* a_stars,
-                                           float a_secondsElapsed);

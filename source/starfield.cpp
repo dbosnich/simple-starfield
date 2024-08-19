@@ -84,23 +84,17 @@ void Starfield::UpdateFixed(float a_fixedTimeSeconds)
     {
         case Buffer::Format::RGBA_FLOAT:
         {
-            static constexpr float BLACK[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
-            static constexpr float WHITE[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-            UpdateStars<float, 4>(BLACK, WHITE, a_fixedTimeSeconds);
+            UpdateStars<float>(a_fixedTimeSeconds);
         }
         break;
         case Buffer::Format::RGBA_UINT8:
         {
-            static constexpr uint8_t BLACK[4] = { 0, 0, 0, UINT8_MAX };
-            static constexpr uint8_t WHITE[4] = { UINT8_MAX, UINT8_MAX, UINT8_MAX, UINT8_MAX };
-            UpdateStars<uint8_t, 4>(BLACK, WHITE, a_fixedTimeSeconds);
+            UpdateStars<uint8_t>(a_fixedTimeSeconds);
         }
         break;
         case Buffer::Format::RGBA_UINT16:
         {
-            static constexpr uint16_t BLACK[4] = { 0, 0, 0, UINT16_MAX };
-            static constexpr uint16_t WHITE[4] = { UINT16_MAX, UINT16_MAX, UINT16_MAX, UINT16_MAX };
-            UpdateStars<uint16_t, 4>(BLACK, WHITE, a_fixedTimeSeconds);
+            UpdateStars<uint16_t>(a_fixedTimeSeconds);
         }
         break;
         default:
@@ -119,11 +113,9 @@ void Starfield::UpdateEnded(float a_deltaTimeSeconds)
 
 //--------------------------------------------------------------
 #ifdef CUDA_SUPPORTED
-template <typename DataType, uint32_t ChannelsPerPixel>
+template <typename DataType>
 extern void UpdateStarsCuda(const Starfield::Config& a_config,
                             const Display::Context& a_context,
-                            const DataType a_backColor[ChannelsPerPixel],
-                            const DataType a_starColor[ChannelsPerPixel],
                             const Stars& a_hostStars,
                             Starfield::Star* a_stars,
                             float a_secondsElapsed);
@@ -140,36 +132,69 @@ T RandomFloat(T a_min, T a_max)
 }
 
 //--------------------------------------------------------------
-template<typename DataType, uint32_t ChannelsPerPixel>
-void UpdateStarsHost(const DataType a_backColor[ChannelsPerPixel],
-                     const DataType a_starColor[ChannelsPerPixel],
-                     const Starfield::Config& a_config,
+template<typename DataType>
+DataType ChannelValueFromFloat(float a_value);
+
+//--------------------------------------------------------------
+template<> float ChannelValueFromFloat<float>(float a_value)
+{
+    return std::max(0.0f, std::min(a_value, 1.0f));
+}
+
+//--------------------------------------------------------------
+template<> uint8_t ChannelValueFromFloat<uint8_t>(float a_value)
+{
+    constexpr float UINT8_MAX_AS_FLOAT = static_cast<float>(UINT8_MAX);
+    a_value = std::max(0.0f, std::min(a_value, 1.0f));
+    a_value *= UINT8_MAX_AS_FLOAT;
+    return static_cast<uint8_t>(a_value);
+}
+
+//--------------------------------------------------------------
+template<> uint16_t ChannelValueFromFloat<uint16_t>(float a_value)
+{
+    constexpr float UINT16_MAX_AS_FLOAT = static_cast<float>(UINT16_MAX);
+    a_value = std::max(0.0f, std::min(a_value, 1.0f));
+    a_value *= UINT16_MAX_AS_FLOAT;
+    return static_cast<uint16_t>(a_value);
+}
+
+//--------------------------------------------------------------
+template<typename DataType>
+DataType ChannelValueFromIndex(const Starfield::Star& a_star,
+                               uint32_t a_index)
+{
+    switch (a_index)
+    {
+        case 0: return ChannelValueFromFloat<DataType>(a_star.r);
+        case 1: return ChannelValueFromFloat<DataType>(a_star.g);
+        case 2: return ChannelValueFromFloat<DataType>(a_star.b);
+        case 3: return ChannelValueFromFloat<DataType>(1.0f); // Alpha
+        default: return ChannelValueFromFloat<DataType>(0.0f);
+    }
+}
+
+//--------------------------------------------------------------
+template<typename DataType>
+void UpdateStarsHost(const Starfield::Config& a_config,
                      Display::Context& a_context,
                      Stars& a_hostStars,
                      float a_secondsElapsed)
 {
     // Cache buffer values.
     const Buffer& buffer = a_context.GetBuffer();
+    const uint32_t bufferSize = buffer.GetSize();
     const uint32_t bufferWidth = buffer.GetWidth();
     const uint32_t bufferHeight = buffer.GetHeight();
     DataType* bufferData = buffer.GetData<DataType>();
-    if (!bufferWidth || !bufferHeight || !bufferData)
+    const uint32_t numChannels = buffer.ChannelsPerPixel(buffer.GetFormat());
+    if (!bufferSize || !bufferWidth || !bufferHeight || !bufferData || !numChannels)
     {
         return;
     }
 
     // Clear the display buffer.
-    const uint32_t totalChannels = bufferWidth *
-                                   bufferHeight *
-                                   ChannelsPerPixel;
-    assert(ChannelsPerPixel == Buffer::ChannelsPerPixel(buffer.GetFormat()));
-    for (uint32_t i = 0; i < totalChannels; i += ChannelsPerPixel)
-    {
-        for (uint32_t j = 0; j < ChannelsPerPixel; ++j)
-        {
-            bufferData[i + j] = a_backColor[j];
-        }
-    }
+    memset(bufferData, 0, bufferSize);
 
     // Draw the stars.
     const float sceneWidth = static_cast<float>(bufferWidth);
@@ -187,6 +212,11 @@ void UpdateStarsHost(const DataType a_backColor[ChannelsPerPixel],
             starInstance.x = (RandomFloat(0.0f, 1.0f) * sceneWidth) - sceneCenterX;
             starInstance.y = (RandomFloat(0.0f, 1.0f) * sceneHeight) - sceneCenterY;
             starInstance.z = (RandomFloat(0.0f, 1.0f) * (a_config.zFar - a_config.zNear));
+
+            // Recolor star
+            starInstance.r = RandomFloat(0.0f, 1.0f);
+            starInstance.g = RandomFloat(0.0f, 1.0f);
+            starInstance.b = RandomFloat(0.0f, 1.0f);
         }
         else
         {
@@ -217,11 +247,11 @@ void UpdateStarsHost(const DataType a_backColor[ChannelsPerPixel],
                 {
                     continue;
                 }
-                const uint32_t index = ((x * ChannelsPerPixel) +
-                                        (y * bufferWidth * ChannelsPerPixel));
-                for (uint32_t z = 0; z < ChannelsPerPixel; ++z)
+                const uint32_t index = ((x * numChannels) +
+                                        (y * bufferWidth * numChannels));
+                for (uint32_t z = 0; z < numChannels; ++z)
                 {
-                    bufferData[index + z] = a_starColor[z];
+                    bufferData[index + z] = ChannelValueFromIndex<DataType>(starInstance, z);
                 }
             }
         }
@@ -229,31 +259,25 @@ void UpdateStarsHost(const DataType a_backColor[ChannelsPerPixel],
 }
 
 //--------------------------------------------------------------
-template<typename DataType, uint32_t ChannelsPerPixel>
-void Starfield::UpdateStars(const DataType a_backColor[ChannelsPerPixel],
-                            const DataType a_starColor[ChannelsPerPixel],
-                            float a_secondsElapsed)
+template<typename DataType>
+void Starfield::UpdateStars(float a_secondsElapsed)
 {
     const Buffer& buffer = m_context->GetBuffer();
     if (buffer.GetInterop() == Buffer::Interop::HOST)
     {
-        UpdateStarsHost<DataType, ChannelsPerPixel>(a_backColor,
-                                                    a_starColor,
-                                                    m_config,
-                                                    *m_context,
-                                                    m_stars,
-                                                    a_secondsElapsed);
+        UpdateStarsHost<DataType>(m_config,
+                                  *m_context,
+                                  m_stars,
+                                  a_secondsElapsed);
     }
     else if (buffer.GetInterop() == Buffer::Interop::CUDA)
     {
     #ifdef CUDA_SUPPORTED
-        UpdateStarsCuda<DataType, ChannelsPerPixel>(m_config,
-                                                    *m_context,
-                                                    a_backColor,
-                                                    a_starColor,
-                                                    m_stars,
-                                                    m_cudaDeviceStars,
-                                                    a_secondsElapsed);
+        UpdateStarsCuda<DataType>(m_config,
+                                  *m_context,
+                                  m_stars,
+                                  m_cudaDeviceStars,
+                                  a_secondsElapsed);
     #endif // CUDA_SUPPORTED
     }
 }

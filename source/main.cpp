@@ -56,40 +56,40 @@ int main(int argc, char** argv)
 
     Simple::Starfield::Config config;
     config.displayContextConfig.graphicsAPI = Simple::Display::Context::GraphicsAPI::NATIVE;
+    config.displayContextConfig.bufferConfig.format = Simple::Display::Buffer::Format::RGBA_UINT8;
     config.displayContextConfig.bufferConfig.interop = Simple::Display::Buffer::Interop::CUDA;
     SetWindowTitle(config.displayContextConfig);
     Simple::Starfield starfield1(config);
-    starfield1.SetCappedFPS(false);
 
     config.displayContextConfig.graphicsAPI = Simple::Display::Context::GraphicsAPI::NATIVE;
+    config.displayContextConfig.bufferConfig.format = Simple::Display::Buffer::Format::RGBA_UINT8;
     config.displayContextConfig.bufferConfig.interop = Simple::Display::Buffer::Interop::HOST;
     SetWindowTitle(config.displayContextConfig);
     Simple::Starfield starfield2(config);
-    starfield2.SetCappedFPS(false);
 
     config.displayContextConfig.graphicsAPI = Simple::Display::Context::GraphicsAPI::OPENGL;
+    config.displayContextConfig.bufferConfig.format = Simple::Display::Buffer::Format::RGBA_UINT8;
     config.displayContextConfig.bufferConfig.interop = Simple::Display::Buffer::Interop::CUDA;
     SetWindowTitle(config.displayContextConfig);
     Simple::Starfield starfield3(config);
-    starfield3.SetCappedFPS(false);
 
     config.displayContextConfig.graphicsAPI = Simple::Display::Context::GraphicsAPI::OPENGL;
+    config.displayContextConfig.bufferConfig.format = Simple::Display::Buffer::Format::RGBA_UINT8;
     config.displayContextConfig.bufferConfig.interop = Simple::Display::Buffer::Interop::HOST;
     SetWindowTitle(config.displayContextConfig);
     Simple::Starfield starfield4(config);
-    starfield4.SetCappedFPS(false);
 
     config.displayContextConfig.graphicsAPI = Simple::Display::Context::GraphicsAPI::VULKAN;
+    config.displayContextConfig.bufferConfig.format = Simple::Display::Buffer::Format::RGBA_UINT8;
     config.displayContextConfig.bufferConfig.interop = Simple::Display::Buffer::Interop::CUDA;
     SetWindowTitle(config.displayContextConfig);
     Simple::Starfield starfield5(config);
-    starfield5.SetCappedFPS(false);
 
     config.displayContextConfig.graphicsAPI = Simple::Display::Context::GraphicsAPI::VULKAN;
+    config.displayContextConfig.bufferConfig.format = Simple::Display::Buffer::Format::RGBA_UINT8;
     config.displayContextConfig.bufferConfig.interop = Simple::Display::Buffer::Interop::HOST;
     SetWindowTitle(config.displayContextConfig);
     Simple::Starfield starfield6(config);
-    starfield6.SetCappedFPS(false);
 
     // MacOS display contexts can only run on the main thread.
 #ifdef __APPLE__
