@@ -67,7 +67,6 @@ __device__ DataType ChannelValueFromIndexDevice(const Starfield::Star& a_star,
 template <typename DataType>
 __global__ void UpdateStarsKernel(const Starfield::Config a_config,
                                   Starfield::Star* a_stars,
-                                  size_t a_numDeviceStars,
                                   float a_secondsElapsed,
                                   DataType* a_bufferData,
                                   uint32_t a_bufferWidth,
@@ -76,7 +75,7 @@ __global__ void UpdateStarsKernel(const Starfield::Config a_config,
                                   uint64_t a_randomSeed)
 {
     const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= a_numDeviceStars)
+    if (idx >= a_config.numStars)
     {
         return;
     }
@@ -121,10 +120,16 @@ __global__ void UpdateStarsKernel(const Starfield::Config a_config,
     // Draw star
     for (int32_t x = (int32_t)posX; x < (int32_t)(posX + width); ++x)
     {
-        if (x < 0 || (uint32_t)x >= a_bufferWidth) continue;
+        if (x < 0 || (uint32_t)x >= a_bufferWidth)
+        {
+            continue;
+        }
         for (int32_t y = (int32_t)posY; y < (int32_t)(posY + height); ++y)
         {
-            if (y < 0 || (uint32_t)y >= a_bufferHeight) continue;
+            if (y < 0 || (uint32_t)y >= a_bufferHeight)
+            {
+                continue;
+            }
             const uint32_t index = ((x * a_numChannels) + (y * a_bufferWidth * a_numChannels));
             for (uint32_t z = 0; z < a_numChannels; ++z)
             {
@@ -139,7 +144,6 @@ template <typename DataType>
 void UpdateStarsCuda(const Starfield::Config& a_config,
                      const Display::Context& a_context,
                      Starfield::Star* a_stars,
-                     size_t a_numDeviceStars,
                      float a_secondsElapsed)
 {
     const Buffer& buffer = a_context.GetBuffer();
@@ -158,11 +162,10 @@ void UpdateStarsCuda(const Starfield::Config& a_config,
 
     // Prepare for kernel launch.
     const uint32_t threadsPerBlock = 256;
-    const uint32_t numBlocks = ((uint32_t)a_numDeviceStars + threadsPerBlock - 1) / threadsPerBlock;
+    const uint32_t numBlocks = (a_config.numStars + threadsPerBlock - 1) / threadsPerBlock;
     const uint64_t randomSeed = static_cast<uint64_t>(time(nullptr));
     UpdateStarsKernel<DataType><<<numBlocks, threadsPerBlock>>>(a_config,
                                                                 a_stars,
-                                                                a_numDeviceStars,
                                                                 a_secondsElapsed,
                                                                 bufferData,
                                                                 bufferWidth,
@@ -172,37 +175,19 @@ void UpdateStarsCuda(const Starfield::Config& a_config,
 }
 
 //--------------------------------------------------------------
-template <typename DataType>
-void UpdateStarsCuda(const Starfield::Config& a_config,
-                     const Display::Context& a_context,
-                     const Stars& a_hostStars,
-                     Starfield::Star* a_stars,
-                     float a_secondsElapsed)
-{
-    UpdateStarsCuda<DataType>(a_config,
-                              a_context,
-                              a_stars,
-                              a_hostStars.size(),
-                              a_secondsElapsed);
-}
-
-//--------------------------------------------------------------
 template void UpdateStarsCuda<float>(const Starfield::Config& a_config,
                                      const Display::Context& a_context,
-                                     const Stars& a_hostStars,
                                      Starfield::Star* a_stars,
                                      float a_secondsElapsed);
 
 //--------------------------------------------------------------
 template void UpdateStarsCuda<uint8_t>(const Starfield::Config& a_config,
                                        const Display::Context& a_context,
-                                       const Stars& a_hostStars,
                                        Starfield::Star* a_stars,
                                        float a_secondsElapsed);
 
 //--------------------------------------------------------------
 template void UpdateStarsCuda<uint16_t>(const Starfield::Config& a_config,
                                         const Display::Context& a_context,
-                                        const Stars& a_hostStars,
                                         Starfield::Star* a_stars,
                                         float a_secondsElapsed);

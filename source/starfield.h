@@ -61,10 +61,9 @@ protected:
     void OnFrameComplete(const FrameStats& a_stats) override;
 
 private:
-    Display::Context* m_context = nullptr;
-    std::vector<Star> m_stars;
-    Star* m_cudaDeviceStars;
     const Config m_config;
+    Star* m_starsBuffer = nullptr;
+    Display::Context* m_context = nullptr;
 };
 
 } // namespace Simple

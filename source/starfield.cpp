@@ -12,6 +12,7 @@
 #include <assert.h>
 #include <cstring>
 #include <random>
+#include <new>
 
 #ifdef CUDA_SUPPORTED
 #   include <cuda_runtime.h>
@@ -20,13 +21,11 @@
 using namespace Simple;
 using namespace Simple::Display;
 
-using Stars = std::vector<Starfield::Star>;
-
 //--------------------------------------------------------------
 Starfield::Starfield(const Config& a_config)
-    : m_stars(a_config.numStars)
-    , m_cudaDeviceStars(nullptr)
-    , m_config(a_config)
+    : m_config(a_config)
+    , m_starsBuffer(nullptr)
+    , m_context(nullptr)
 {
 }
 
@@ -36,14 +35,22 @@ void Starfield::StartUp()
     assert(m_context == nullptr);
     m_context = new Context(m_config.displayContextConfig);
 
-#ifdef CUDA_SUPPORTED
-    const size_t starsSize = m_stars.size() * sizeof(Star);
-    cudaMalloc(&m_cudaDeviceStars, starsSize);
-    cudaMemcpy(m_cudaDeviceStars,
-               m_stars.data(),
-               starsSize,
-               cudaMemcpyHostToDevice);
-#endif // CUDA_SUPPORTED
+    const Buffer& buffer = m_context->GetBuffer();
+    const Buffer::Interop bufferInterop = buffer.GetInterop();
+    const size_t sizeBytes = m_config.numStars * sizeof(Star);
+    if (bufferInterop == Buffer::Interop::HOST)
+    {
+        void* starsBuffer = malloc(sizeBytes);
+        memset(starsBuffer, 0, sizeBytes);
+        m_starsBuffer = static_cast<Star*>(starsBuffer);
+    }
+    else if (bufferInterop == Buffer::Interop::CUDA)
+    {
+    #ifdef CUDA_SUPPORTED
+        cudaMalloc(&m_starsBuffer, sizeBytes);
+        cudaMemset(m_starsBuffer, 0, sizeBytes);
+    #endif // CUDA_SUPPORTED
+    }
 
     // Shut down immediately if there is no display buffer.
     if (!m_context->GetBuffer().GetData())
@@ -55,12 +62,21 @@ void Starfield::StartUp()
 //--------------------------------------------------------------
 void Starfield::ShutDown()
 {
-#ifdef CUDA_SUPPORTED
-    cudaFree(m_cudaDeviceStars);
-#endif // CUDA_SUPPORTED
-    m_cudaDeviceStars = nullptr;
+    const Buffer& buffer = m_context->GetBuffer();
+    const Buffer::Interop bufferInterop = buffer.GetInterop();
+    if (bufferInterop == Buffer::Interop::HOST)
+    {
+        free(m_starsBuffer);
+    }
+    else if (bufferInterop == Buffer::Interop::CUDA)
+    {
+    #ifdef CUDA_SUPPORTED
+        cudaFree(m_starsBuffer);
+    #endif // CUDA_SUPPORTED
+    }
+    m_starsBuffer = nullptr;
 
-    delete(m_context);
+    delete m_context;
     m_context = nullptr;
 }
 
@@ -117,18 +133,16 @@ void Starfield::UpdateEnded(float a_deltaTimeSeconds)
 template <typename DataType>
 extern void UpdateStarsCuda(const Starfield::Config& a_config,
                             const Display::Context& a_context,
-                            const Stars& a_hostStars,
                             Starfield::Star* a_stars,
                             float a_secondsElapsed);
 #endif // CUDA_SUPPORTED
 
 //--------------------------------------------------------------
-template <class T = uint32_t>
-T RandomFloat(T a_min, T a_max)
+float RandomFloat(float a_min, float a_max)
 {
     static std::random_device s_randomDevice;
     static std::mt19937 s_generator(s_randomDevice());
-    std::uniform_real_distribution<T> distribution(a_min, a_max);
+    std::uniform_real_distribution<float> distribution(a_min, a_max);
     return distribution(s_generator);
 }
 
@@ -179,7 +193,7 @@ DataType ChannelValueFromIndex(const Starfield::Star& a_star,
 template<typename DataType>
 void UpdateStarsHost(const Starfield::Config& a_config,
                      Display::Context& a_context,
-                     Stars& a_hostStars,
+                     Starfield::Star* a_stars,
                      float a_secondsElapsed)
 {
     // Cache buffer values.
@@ -202,10 +216,10 @@ void UpdateStarsHost(const Starfield::Config& a_config,
     const float sceneHeight = static_cast<float>(bufferHeight);
     const float sceneCenterX = sceneWidth * 0.5f;
     const float sceneCenterY = sceneHeight * 0.5f;
-    const size_t numStars = a_hostStars.size();
-    for (size_t i = 0; i < numStars; ++i)
+    const uint32_t numStars = a_config.numStars;
+    for (uint32_t i = 0; i < numStars; ++i)
     {
-        Starfield::Star& starInstance = a_hostStars[i];
+        Starfield::Star& starInstance = a_stars[i];
         if (starInstance.z <= a_config.zNear)
         {
             // The star has passed the near clip plane,
@@ -268,7 +282,7 @@ void Starfield::UpdateStars(float a_secondsElapsed)
     {
         UpdateStarsHost<DataType>(m_config,
                                   *m_context,
-                                  m_stars,
+                                  m_starsBuffer,
                                   a_secondsElapsed);
     }
     else if (buffer.GetInterop() == Buffer::Interop::CUDA)
@@ -276,8 +290,7 @@ void Starfield::UpdateStars(float a_secondsElapsed)
     #ifdef CUDA_SUPPORTED
         UpdateStarsCuda<DataType>(m_config,
                                   *m_context,
-                                  m_stars,
-                                  m_cudaDeviceStars,
+                                  m_starsBuffer,
                                   a_secondsElapsed);
     #endif // CUDA_SUPPORTED
     }
