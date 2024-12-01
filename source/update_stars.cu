@@ -74,62 +74,64 @@ __global__ void UpdateStarsKernel(const Starfield::Config a_config,
                                   uint32_t a_numChannels,
                                   uint64_t a_randomSeed)
 {
+    // Calculate the kernel id.
     const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= a_config.numStars)
     {
         return;
     }
 
-    // Update and draw stars
+    // Random state.
     curandState state;
     curand_init(a_randomSeed, idx, 0, &state);
 
+    // Calculate scene values.
     const float sceneWidth = static_cast<float>(a_bufferWidth);
     const float sceneHeight = static_cast<float>(a_bufferHeight);
     const float sceneCenterX = sceneWidth * 0.5f;
     const float sceneCenterY = sceneHeight * 0.5f;
 
+    // Update one star in each kernel.
     Starfield::Star& starInstance = a_stars[idx];
     if (starInstance.z <= a_config.zNear)
     {
-        // Reposition star
+        // The star has passed the near clip plane,
+        // position it randomly in the visible range.
         starInstance.x = (curand_uniform(&state) * sceneWidth) - sceneCenterX;
         starInstance.y = (curand_uniform(&state) * sceneHeight) - sceneCenterY;
         starInstance.z = (curand_uniform(&state) * (a_config.zFar - a_config.zNear)) + a_config.zNear;
 
-        // Recolor star
+        // Randomly color the star.
         starInstance.r = curand_uniform(&state);
         starInstance.g = curand_uniform(&state);
         starInstance.b = curand_uniform(&state);
     }
     else
     {
-        // Move star towards camera
+        // The star is still visible, move it towards the camera.
         starInstance.z -= a_config.starSpeed * a_secondsElapsed;
     }
 
-    // Project star onto screen
+    // Project the star onto the screen.
     const float posX = ((starInstance.x * a_config.focalLength) / starInstance.z) + sceneCenterX;
     const float posY = ((starInstance.y * a_config.focalLength) / starInstance.z) + sceneCenterY;
 
-    // Scale star
+    // Scale the star such that it gets bigger as it moves towards the screen.
     const float scale = (1.0f - (starInstance.z / a_config.zFar));
     const float width = (a_config.starWidth * scale);
     const float height = (a_config.starHeight * scale);
 
-    // Draw star
-    for (int32_t x = (int32_t)posX; x < (int32_t)(posX + width); ++x)
+    // Draw the star to the pixel buffer.
+    const uint32_t minX = static_cast<uint32_t>(max(0.0f, posX));
+    const uint32_t maxX = static_cast<uint32_t>(min(sceneWidth,
+                                                max(0.0f, posX + width)));
+    const uint32_t minY = static_cast<uint32_t>(max(0.0f, posY));
+    const uint32_t maxY = static_cast<uint32_t>(min(sceneHeight,
+                                                max(0.0f, posY + height)));
+    for (uint32_t x = minX; x < maxX; ++x)
     {
-        if (x < 0 || (uint32_t)x >= a_bufferWidth)
+        for (uint32_t y = minY; y < maxY; ++y)
         {
-            continue;
-        }
-        for (int32_t y = (int32_t)posY; y < (int32_t)(posY + height); ++y)
-        {
-            if (y < 0 || (uint32_t)y >= a_bufferHeight)
-            {
-                continue;
-            }
             const uint32_t index = ((x * a_numChannels) + (y * a_bufferWidth * a_numChannels));
             for (uint32_t z = 0; z < a_numChannels; ++z)
             {

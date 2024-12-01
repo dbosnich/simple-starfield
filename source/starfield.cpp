@@ -211,11 +211,13 @@ void UpdateStarsHost(const Starfield::Config& a_config,
     // Clear the display buffer.
     memset(bufferData, 0, bufferSize);
 
-    // Draw the stars.
+    // Calculate scene values.
     const float sceneWidth = static_cast<float>(bufferWidth);
     const float sceneHeight = static_cast<float>(bufferHeight);
     const float sceneCenterX = sceneWidth * 0.5f;
     const float sceneCenterY = sceneHeight * 0.5f;
+
+    // Update all the stars.
     const uint32_t numStars = a_config.numStars;
     for (uint32_t i = 0; i < numStars; ++i)
     {
@@ -228,15 +230,14 @@ void UpdateStarsHost(const Starfield::Config& a_config,
             starInstance.y = (RandomFloat(0.0f, 1.0f) * sceneHeight) - sceneCenterY;
             starInstance.z = (RandomFloat(0.0f, 1.0f) * (a_config.zFar - a_config.zNear));
 
-            // Recolor star
+            // Randomly color the star.
             starInstance.r = RandomFloat(0.0f, 1.0f);
             starInstance.g = RandomFloat(0.0f, 1.0f);
             starInstance.b = RandomFloat(0.0f, 1.0f);
         }
         else
         {
-            // The star is still visible,
-            // move it towards the camera.
+            // The star is still visible, move it towards the camera.
             starInstance.z -= a_config.starSpeed * a_secondsElapsed;
         }
 
@@ -250,18 +251,16 @@ void UpdateStarsHost(const Starfield::Config& a_config,
         const float height = (a_config.starHeight * scale);
 
         // Draw the star to the pixel buffer.
-        for (int32_t x = (int32_t)posX; x < (int32_t)(posX + width); ++x)
+        const uint32_t minX = static_cast<uint32_t>(std::max(0.0f, posX));
+        const uint32_t maxX = static_cast<uint32_t>(std::min(sceneWidth,
+                                                    std::max(0.0f, posX + width)));
+        const uint32_t minY = static_cast<uint32_t>(std::max(0.0f, posY));
+        const uint32_t maxY = static_cast<uint32_t>(std::min(sceneHeight,
+                                                    std::max(0.0f, posY + height)));
+        for (uint32_t x = minX; x < maxX; ++x)
         {
-            if (x < 0 || (uint32_t)x >= bufferWidth)
+            for (uint32_t y = minY; y < maxY; ++y)
             {
-                continue;
-            }
-            for (int32_t y = (int32_t)posY; y < (int32_t)(posY + height); ++y)
-            {
-                if (y < 0 || (uint32_t)y >= bufferHeight)
-                {
-                    continue;
-                }
                 const uint32_t index = ((x * numChannels) +
                                         (y * bufferWidth * numChannels));
                 for (uint32_t z = 0; z < numChannels; ++z)
